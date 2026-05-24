@@ -222,7 +222,7 @@ cron.schedule('0 0,12 * * *', async () => {
                 Actúa como un analista de sistemas automatizado.
                 Analiza esta telemetría del equipo ${deviceId} y redacta un reporte que será entregado dos veces al día, en 3-4 viñetas técnicas.
                 Analiza estos procesos. Para cada nombre de archivo detectado, busca en internet a qué software comercial corresponde y úsalo en el reporte. Si es un proceso del sistema de Windows, explícame brevemente qué función cumple.
-                Entrega el reporte en un texto simple.
+                Entrega el reporte en un texto simple y evita cualquier formato del tipo markdown.
                 
                 DATOS GLOBALES DEL SISTEMA (${deviceId}):
                 - Lecturas totales: ${logs.length}
