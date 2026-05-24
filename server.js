@@ -39,11 +39,13 @@ const User = mongoose.model('User', new mongoose.Schema({
 }));
 
 const Report = mongoose.model('Report', new mongoose.Schema({
+    deviceId: { type: String, required: true },
     content: String,
     timestamp: { type: Date, default: Date.now }
 }));
 
 const Metric = mongoose.model('Metric', new mongoose.Schema({
+    deviceId: { type: String, required: true },
     cpu: Number, ram: Number, gpu: Number, top_procesos: Array,
     timestamp: { type: Date, default: Date.now }
 }));
@@ -102,26 +104,49 @@ app.get('/dashboard', checkAuthenticated, (req, res) => {
     res.sendFile(path.join(__dirname, 'dashboard', 'dashboard.html'));
 });
 
+app.get('/api/devices', async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).send();
+    try {
+        const devices = await Metric.distinct('deviceId');
+        res.json(devices);
+    } catch (error) {
+        res.status(500).json({ error: "Error al obtener dispositivos" });
+    }
+});
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" });
 
 app.post('/api/metrics', async (req, res) => {
     try {
-        const newMetric = new Metric(req.body);
+        const data = req.body;
+
+        const { deviceId } = data; 
+
+        if (!deviceId) return res.status(400).json({ error: "Falta deviceId" });
+
+        io.emit('data_update', data);
+
+        const newMetric = new Metric(data);
         await newMetric.save();
-        io.emit('data_update', req.body); 
-        res.status(201).json({ status: 'ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+
+        res.status(200).json({ status: 'ok, guardado en BD' });
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 });
 
 app.get('/api/metrics/today', async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).send();
     
+    const { deviceId } = req.query;
+    if (!deviceId) return res.status(400).json({ error: "Se requiere un deviceId" });
     const inicioDia = new Date();
     inicioDia.setHours(0, 0, 0, 0);
 
     try {
         const metricas = await Metric.find({
+            deviceId: deviceId,
             timestamp: { $gte: inicioDia }
         }).sort({ timestamp: 1 });
         res.json(metricas);
@@ -131,8 +156,10 @@ app.get('/api/metrics/today', async (req, res) => {
 });
 
 app.get('/api/reports', async (req, res) => {
+    const { deviceId } = req.query;
+    if (!deviceId) return res.status(400).json({ error: "Se requiere un deviceId" });
     try {
-        const reports = await Report.find({}, 'timestamp').sort({ timestamp: -1 });
+        const reports = await Report.find({ deviceId: deviceId }, 'timestamp content').sort({ timestamp: -1 });
         res.json(reports);
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -153,74 +180,74 @@ cron.schedule('0 0,12 * * *', async () => {
     const hace12h = new Date(Date.now() - 12 * 60 * 60 * 1000);
     
     try {
-        const logs = await Metric.find({ timestamp: { $gte: hace12h } });
+        const dispositivosActivos = await Metric.distinct('deviceId', { timestamp: { $gte: hace12h } });
         
-        if (logs.length > 0) {
-            let totalCpu = 0;
-            let totalRam = 0;
-            let totalGpu = 0;
-            let historialProcesos = {};
+       for (const deviceId of dispositivosActivos) {
+            const logs = await Metric.find({ deviceId: deviceId, timestamp: { $gte: hace12h } });
+            
+            if (logs.length > 0) {
+                let totalCpu = 0; let totalRam = 0; let totalGpu = 0;
+                let historialProcesos = {};
 
-            logs.forEach(log => {
+                logs.forEach(log => {
+                    totalCpu += log.cpu || 0;
+                    totalRam += log.ram || 0;
+                    totalGpu += log.gpu || 0;
 
-                totalCpu += log.cpu || 0;
-                totalRam += log.ram || 0;
-                totalGpu += log.gpu || 0;
+                    if (log.top_procesos && log.top_procesos.length > 0) {
+                        log.top_procesos.forEach(p => {
+                            if (!historialProcesos[p.nombre]) {
+                                historialProcesos[p.nombre] = { apariciones: 0, cpuSumada: 0 };
+                            }
+                            historialProcesos[p.nombre].apariciones += 1;
+                            historialProcesos[p.nombre].cpuSumada += parseFloat(p.cpu);
+                        });
+                    }
+                });
 
-                if (log.top_procesos && log.top_procesos.length > 0) {
-                    log.top_procesos.forEach(p => {
-                        if (!historialProcesos[p.nombre]) {
-                            historialProcesos[p.nombre] = { apariciones: 0, cpuSumada: 0 };
-                        }
-                        historialProcesos[p.nombre].apariciones += 1;
-                        historialProcesos[p.nombre].cpuSumada += parseFloat(p.cpu);
-                    });
-                }
-            });
-
-            const avgCpu = (totalCpu / logs.length).toFixed(2);
-            const avgRam = (totalRam / logs.length).toFixed(2);
-            const avgGpu = (totalGpu / logs.length).toFixed(2);
+                const avgCpu = (totalCpu / logs.length).toFixed(2);
+                const avgRam = (totalRam / logs.length).toFixed(2);
+                const avgGpu = (totalGpu / logs.length).toFixed(2);
 
                 const topHistorico = Object.keys(historialProcesos).map(nombre => {
-                const stats = historialProcesos[nombre];
-                return {
-                    programa: nombre,
-                    frecuencia: ((stats.apariciones / logs.length) * 100).toFixed(1),
-                    pesoPromedio: (stats.cpuSumada / stats.apariciones).toFixed(1)
-                };
-            }).sort((a, b) => b.pesoPromedio - a.pesoPromedio).slice(0, 3);
+                    const stats = historialProcesos[nombre];
+                    return {
+                        programa: nombre,
+                        frecuencia: ((stats.apariciones / logs.length) * 100).toFixed(1),
+                        pesoPromedio: (stats.cpuSumada / stats.apariciones).toFixed(1)
+                    };
+                }).sort((a, b) => b.pesoPromedio - a.pesoPromedio).slice(0, 3);
 
-            const prompt = `
-            Actúa como un analista de sistemas automatizado.
-            Analiza esta telemetría y redacta un reporte que será entregado dos veces al día, en 3-4 viñetas técnicas.
-            Analiza estos procesos. Para cada nombre de archivo detectado (ej. 'code.exe'), busca en internet a qué software comercial corresponde y úsalo en el reporte (ej. 'Visual Studio Code'). Si es un proceso del sistema de Windows, explícame brevemente qué función cumple.
-            Entrega el reporte en un texto simple.
-            
-            DATOS GLOBALES DEL SISTEMA:
-            - Lecturas totales: ${logs.length}
-            - CPU Promedio General: ${avgCpu}%
-            - RAM Promedio General: ${avgRam}%
-            - GPU Promedio General: ${avgGpu}%
-            
-            TOP 3 PROGRAMAS PERSISTENTES HOY:
-            1. ${topHistorico[0] ? `${topHistorico[0].programa} (Activo ${topHistorico[0].frecuencia}% del tiempo)` : 'N/A'}
-            2. ${topHistorico[1] ? `${topHistorico[1].programa} (Activo ${topHistorico[1].frecuencia}% del tiempo)` : 'N/A'}
-            3. ${topHistorico[2] ? `${topHistorico[2].programa} (Activo ${topHistorico[2].frecuencia}% del tiempo)` : 'N/A'}
-            `;
+                const prompt = `
+                Actúa como un analista de sistemas automatizado.
+                Analiza esta telemetría del equipo ${deviceId} y redacta un reporte que será entregado dos veces al día, en 3-4 viñetas técnicas.
+                Analiza estos procesos. Para cada nombre de archivo detectado, busca en internet a qué software comercial corresponde y úsalo en el reporte. Si es un proceso del sistema de Windows, explícame brevemente qué función cumple.
+                Entrega el reporte en un texto simple.
+                
+                DATOS GLOBALES DEL SISTEMA (${deviceId}):
+                - Lecturas totales: ${logs.length}
+                - CPU Promedio General: ${avgCpu}%
+                - RAM Promedio General: ${avgRam}%
+                - GPU Promedio General: ${avgGpu}%
+                
+                TOP 3 PROGRAMAS PERSISTENTES HOY:
+                1. ${topHistorico[0] ? `${topHistorico[0].programa} (Activo ${topHistorico[0].frecuencia}% del tiempo)` : 'N/A'}
+                2. ${topHistorico[1] ? `${topHistorico[1].programa} (Activo ${topHistorico[1].frecuencia}% del tiempo)` : 'N/A'}
+                3. ${topHistorico[2] ? `${topHistorico[2].programa} (Activo ${topHistorico[2].frecuencia}% del tiempo)` : 'N/A'}
+                `;
 
-            const result = await model.generateContent(prompt);
-            const reportText = result.response.text();
-            await new Report({ content: reportText }).save();
-            io.emit('report_update', { content: reportText });
-            console.log("\nREPORTE DIARIO POR LA IA:\n=========================");
-            console.log(result.response.text());
-            console.log("=========================\n");
-        } else {
-            console.log("No hay datos suficientes para el reporte de hoy.");
+                const result = await model.generateContent(prompt);
+                const reportText = result.response.text();
+                
+                await new Report({ deviceId: deviceId, content: reportText }).save();
+
+                io.emit('report_update', { deviceId: deviceId, content: reportText });
+                
+                console.log(`\nReporte generado exitosamente para: ${deviceId}`);
+            }
         }
     } catch (error) {
-        console.error("Error generando el reporte:", error);
+        console.error("Error generando reportes masivos:", error);
     }
 }, {
     scheduled: true,
@@ -229,5 +256,5 @@ cron.schedule('0 0,12 * * *', async () => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Servidor corriendo en http://localhost:${PORT}`);
+    console.log(`Servidor corriendo en el puerto ${PORT}`);
 });
