@@ -218,23 +218,21 @@ cron.schedule('0 0,12 * * *', async () => {
                     };
                 }).sort((a, b) => b.pesoPromedio - a.pesoPromedio).slice(0, 3);
 
-                const prompt = `
-                Actúa como un analista de sistemas automatizado.
-                Analiza esta telemetría del equipo ${deviceId} y redacta un reporte que será entregado dos veces al día, en 3-4 viñetas técnicas.
-                Analiza estos procesos. Para cada nombre de archivo detectado, busca en internet a qué software comercial corresponde y úsalo en el reporte. Si es un proceso del sistema de Windows, explícame brevemente qué función cumple.
-                Entrega el reporte en un texto simple y evita cualquier formato del tipo markdown.
+                const prompt = `Actúa como un analista de sistemas automatizado.
+                Analiza esta telemetría del equipo ${deviceId} y redacta un reporte técnico.
                 
-                DATOS GLOBALES DEL SISTEMA (${deviceId}):
-                - Lecturas totales: ${logs.length}
-                - CPU Promedio General: ${avgCpu}%
-                - RAM Promedio General: ${avgRam}%
-                - GPU Promedio General: ${avgGpu}%
+                REGLA ESTRICTA DE FORMATO: 
+                Tu respuesta debe ser exclusivamente en TEXTO PLANO. Está estrictamente prohibido usar emojis, formato Markdown, asteriscos (**) o hashtags (#). Usa guiones medios (-) para las viñetas. No agregues saludos ni despedidas.
                 
-                TOP 3 PROGRAMAS PERSISTENTES HOY:
-                1. ${topHistorico[0] ? `${topHistorico[0].programa} (Activo ${topHistorico[0].frecuencia}% del tiempo)` : 'N/A'}
-                2. ${topHistorico[1] ? `${topHistorico[1].programa} (Activo ${topHistorico[1].frecuencia}% del tiempo)` : 'N/A'}
-                3. ${topHistorico[2] ? `${topHistorico[2].programa} (Activo ${topHistorico[2].frecuencia}% del tiempo)` : 'N/A'}
-                `;
+                Sigue exactamente esta plantilla para redactar tu respuesta rellenando los datos:
+                
+                Reporte de Telemetria y Analisis de Procesos - Equipo: ${deviceId}
+                
+                - El equipo ${deviceId} muestra un estado operativo [Indica si es saludable/estable o si hay riesgo] tras procesar un total de ${logs.length} lecturas de telemetria, registrando un uso promedio de recursos: CPU al ${avgCpu}%, RAM al ${avgRam}% y GPU al ${avgGpu}%, lo que indica [Conclusión breve sobre estos niveles].
+                
+                - El proceso con mayor presencia en el sistema es ${topHistorico[0] ? topHistorico[0].programa : 'N/A'}, manteniendose activo el ${topHistorico[0] ? topHistorico[0].frecuencia : '0'}% del tiempo de medicion. Este archivo pertenece al software comercial [Busca a qué software pertenece], y su funcion principal es [Explica su función brevemente].
+                
+                - Se detectaron otros procesos activos como ${topHistorico[1] ? `${topHistorico[1].programa} (activo el ${topHistorico[1].frecuencia}%)` : 'N/A'} y ${topHistorico[2] ? `${topHistorico[2].programa} (activo el ${topHistorico[2].frecuencia}%)` : 'N/A'}. ${topHistorico[1] ? topHistorico[1].programa : ''} corresponde a la aplicacion [Software y función], mientras que ${topHistorico[2] ? topHistorico[2].programa : ''} pertenece a [Software y función].`;
 
                 const result = await model.generateContent(prompt);
                 const reportText = result.response.text();
