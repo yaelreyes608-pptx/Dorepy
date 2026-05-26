@@ -175,7 +175,7 @@ app.get('/api/report/:id', async (req, res) => {
     }
 });
 
-cron.schedule('0 0,12 * * *', async () => {
+cron.schedule('* * * * *', async () => {
     console.log("Iniciando análisis...");
     const hace12h = new Date(Date.now() - 12 * 60 * 60 * 1000);
     
