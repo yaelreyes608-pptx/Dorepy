@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta charset="UTF-8">
     <title>Dashboard - Monitor IA</title>
     <script src="/socket.io/socket.io.js"></script>
@@ -9,14 +10,23 @@
 </head>
 <body>
     <div class="container">
-        <h1>
-            <span>DASHBOARD OPERATIVO</span>
-        </h1>
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; padding-bottom: 15px; margin-bottom: 20px;">
+            <h1 style="border: none; padding: 0; margin: 0;">
+                <span>DASHBOARD OPERATIVO</span>
+            </h1>
+            
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <label for="device-selector" style="color: #ffb300; font-weight: bold;">Equipo:</label>
+                <select id="device-selector" style="background: #263238; color: white; border: 1px solid #546e7a; padding: 8px; border-radius: 6px; cursor: pointer; font-size: 1rem;">
+                    <option value="">Cargando equipos...</option>
+                </select>
+            </div>
+        </div>
         
         <div class="top-box">
             <h3>PROCESOS DE ALTO IMPACTO (CPU)</h3>
             <ul id="lista-procesos">
-                <li>Sincronizando con el sensor local...</li>
+                <li>Esperando datos del dispositivo seleccionado...</li>
             </ul>
         </div>
 
@@ -37,8 +47,9 @@
 
     <script>
         const socket = io();
+        let currentDevice = null;
+
         const ctx = document.getElementById('telemetryChart').getContext('2d');
-        
         const chart = new Chart(ctx, {
             type: 'line',
             data: { labels: [], datasets: [
@@ -53,32 +64,53 @@
             }
         });
 
-        socket.on('data_update', (data) => {
-            const time = new Date().toLocaleTimeString();
-            
-            chart.data.labels.push(time);
-            chart.data.datasets[0].data.push(data.cpu);
-            chart.data.datasets[1].data.push(data.ram);
-            chart.data.datasets[2].data.push(data.gpu);
+        const deviceSelect = document.getElementById('device-selector');
+        const historySelect = document.getElementById('report-history');
+        const listaProcesos = document.getElementById('lista-procesos');
+        const iaReportDiv = document.getElementById('ia-report');
 
+        async function initDashboard() {
+            try {
+                const res = await fetch('/api/devices');
+                const devices = await res.json();
+                
+                deviceSelect.innerHTML = '';
+                if (devices.length > 0) {
+                    devices.forEach(d => {
+                        const option = document.createElement('option');
+                        option.value = d;
+                        option.textContent = d;
+                        deviceSelect.appendChild(option);
+                    });
+                    currentDevice = devices[0];
+                    loadDeviceData(currentDevice);
+                } else {
+                    deviceSelect.innerHTML = '<option value="">No hay equipos registrados</option>';
+                }
+            } catch (error) {
+                console.error("Error cargando dispositivos:", error);
+            }
+        }
+
+        deviceSelect.addEventListener('change', (e) => {
+            currentDevice = e.target.value;
+            loadDeviceData(currentDevice);
+        });
+
+        async function loadDeviceData(deviceId) {
+
+            chart.data.labels = [];
+            chart.data.datasets.forEach(dataset => dataset.data = []);
             chart.update();
+            listaProcesos.innerHTML = '<li>Cargando procesos...</li>';
+            iaReportDiv.innerText = 'Cargando reportes...';
 
-            const lista = document.getElementById('lista-procesos');
-            lista.innerHTML = '';
-            data.top_procesos.forEach(p => {
-                lista.innerHTML += `<li><span>💻 ${p.nombre}</span> <span style="color: #ff5252;">${p.cpu}%</span></li>`;
-            });
-        });
+            try {
 
-        fetch('/api/latest-report')
-        .then(res => res.json())
-        .then(data => {
-            document.getElementById('ia-report').innerText = data.content;
-        });
-        fetch('/api/metrics/today')
-            .then(res => res.json())
-            .then(data => {
-                data.forEach(m => {
+                const resMetrics = await fetch(`/api/metrics/today?deviceId=${deviceId}`);
+                const dataMetrics = await resMetrics.json();
+                
+                dataMetrics.forEach(m => {
                     const time = new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                     chart.data.labels.push(time);
                     chart.data.datasets[0].data.push(m.cpu);
@@ -86,39 +118,74 @@
                     chart.data.datasets[2].data.push(m.gpu);
                 });
                 chart.update();
-            });
 
-        socket.on('report_update', (data) => {
-        document.getElementById('ia-report').innerText = data.content;
-    });
+                loadHistory(deviceId);
+            } catch (error) {
+                console.error("Error cargando datos del dispositivo:", error);
+            }
+        }
 
-    const historySelect = document.getElementById('report-history');
-    async function loadHistory() {
-    const res = await fetch('/api/reports');
-    const reports = await res.json();
-    
-    historySelect.innerHTML = '<option value="">Seleccionar fecha...</option>';
-    reports.forEach(report => {
-        const date = new Date(report.timestamp).toLocaleDateString();
-        const time = new Date(report.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const option = document.createElement('option');
-        option.value = report._id;
-        option.textContent = `${date} - ${time}`;
-        historySelect.appendChild(option);
-    });
-    }   
-    historySelect.addEventListener('change', async (e) => {
-        if (!e.target.value) return;
-    
+        async function loadHistory(deviceId) {
+            const res = await fetch(`/api/reports?deviceId=${deviceId}`);
+            const reports = await res.json();
+            
+            historySelect.innerHTML = '<option value="">Seleccionar fecha...</option>';
+            if (reports.length > 0) {
+                reports.forEach((report, index) => {
+                    const date = new Date(report.timestamp).toLocaleDateString();
+                    const time = new Date(report.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    const option = document.createElement('option');
+                    option.value = report._id;
+                    option.textContent = `${date} - ${time}`;
+                    historySelect.appendChild(option);
+                });
+
+                iaReportDiv.innerText = reports[0].content;
+            } else {
+                iaReportDiv.innerText = "No hay reportes de IA para este dispositivo aún.";
+            }
+        }   
+
+        historySelect.addEventListener('change', async (e) => {
+            if (!e.target.value) return;
             const res = await fetch(`/api/report/${e.target.value}`);
             const data = await res.json();
-    document.getElementById('ia-report').innerText = data.content;
-    });
-    loadHistory();
-    socket.on('report_update', (data) => {
-    document.getElementById('ia-report').innerText = data.content;
-    loadHistory();
-    });
+            iaReportDiv.innerText = data.content;
+        });
+
+        socket.on('data_update', (data) => {
+
+            if (data.deviceId !== currentDevice) return;
+
+            const time = new Date().toLocaleTimeString();
+            chart.data.labels.push(time);
+            chart.data.datasets[0].data.push(data.cpu);
+            chart.data.datasets[1].data.push(data.ram);
+            chart.data.datasets[2].data.push(data.gpu);
+
+            if (chart.data.labels.length > 50) {
+                chart.data.labels.shift();
+                chart.data.datasets.forEach(dataset => dataset.data.shift());
+            }
+            chart.update();
+
+            listaProcesos.innerHTML = '';
+            if (data.top_procesos) {
+                data.top_procesos.forEach(p => {
+                    listaProcesos.innerHTML += `<li><span>💻 ${p.nombre}</span> <span style="color: #ff5252;">${p.cpu}%</span></li>`;
+                });
+            }
+        });
+
+        socket.on('report_update', (data) => {
+
+            if (data.deviceId === currentDevice) {
+                iaReportDiv.innerText = data.content;
+                loadHistory(currentDevice);
+            }
+        });
+
+        initDashboard();
     </script>
 </body>
 </html>
